@@ -52,16 +52,33 @@ class PlotWindow(QWidget):
         px, py = point
         relx = (px-self.xmin)/(self.xmax-self.xmin)
         rely = (py-self.ymin)/(self.ymax-self.ymin)
-        tx = ((relx-self.trans_x)-0.5)*ZOOM_FACTOR**self.zoom + 0.5
-        ty = ((rely-self.trans_y)-0.5)*ZOOM_FACTOR**self.zoom + 0.5
+        tx, ty = self.zoomed((relx-self.trans_x, rely-self.trans_y))
         return tx * width, (1-ty) * height
+
+    def zoomed(self, point):
+        x, y = point
+        x = (x-0.5)*ZOOM_FACTOR**self.zoom + 0.5
+        y = (y-0.5)*ZOOM_FACTOR**self.zoom + 0.5
+        return x, y
+
+    def unzoomed(self, point):
+        x, y = point
+        x = (x-0.5)/ZOOM_FACTOR**self.zoom + 0.5
+        y = (y-0.5)/ZOOM_FACTOR**self.zoom + 0.5
+        return x, y
 
     def wheelEvent(self, e):
         y = e.angleDelta().y()
+        size = self.size()
+        point = e.x() / size.width(), 1 - e.y() / size.height()
+        ox, oy = self.unzoomed(point)
         if y > 0:
             self.zoom += 1
         if y < 0:
             self.zoom -= 1
+        nx, ny = self.unzoomed(point)
+        self.trans_x += ox - nx
+        self.trans_y += oy - ny
         self.update()
 
     def draw_plot_window(self, painter):
