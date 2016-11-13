@@ -87,8 +87,8 @@ class PlotWindow(QWidget):
         self.draw_translation(painter)
 
     def modify_tr(self, x, y):
-        self.trans_x += x * TRANS_DELTA
-        self.trans_y += y * TRANS_DELTA
+        self.trans_x += x * TRANS_DELTA / ZOOM_FACTOR**self.zoom
+        self.trans_y += y * TRANS_DELTA / ZOOM_FACTOR**self.zoom
 
     def modify_zoom(self, z):
         self.zoom += z
