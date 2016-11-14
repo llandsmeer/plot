@@ -1,8 +1,9 @@
 import sys
 from PyQt5.QtWidgets import (QWidget, QSlider, QApplication, 
-    QHBoxLayout, QVBoxLayout)
-from PyQt5.QtCore import QObject, Qt, pyqtSignal
+                             QHBoxLayout, QVBoxLayout, QFileDialog)
+from PyQt5.QtCore import QObject, Qt, pyqtSignal, QSize, QRect
 from PyQt5.QtGui import QPainter, QFont, QColor, QPen, QPainterPath, QBrush
+from PyQt5.QtSvg import QSvgGenerator
 
 ZOOM_FACTOR = 1.2
 TRANS_DELTA = 0.2
@@ -168,6 +169,27 @@ class PlotWindow(QWidget):
     def modify_zoom(self, z):
         self.drawer.zoom += z
 
+    def quicksave(self):
+        path, type_ = QFileDialog.getSaveFileName(self, "Save SVG")
+        if path:
+            self.save_svg(path, self.drawer.width, self.drawer.height)
+
+    def save_svg(self, path, width, height):
+        generator = QSvgGenerator()
+        generator.setFileName(path)
+        generator.setSize(QSize(width, height))
+        generator.setViewBox(QRect(0, 0, width, height))
+        # generator.setTitle
+        painter = QPainter()
+        self.drawer.set_size(width, height)
+        painter.begin(generator)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.HighQualityAntialiasing)
+        self.drawer.draw_lines(painter, self.lines)
+        painter.end()
+        self.update_size()
+        
+
     def keyPressEvent(self, e):
         key = e.key()
         action = self.keymap.get(key, None)
@@ -212,6 +234,7 @@ class PlotWindow(QWidget):
     def resizeEvent(self, e):
         self.update_size()
 
+
     keymap = {
         Qt.Key_Escape: 'exit',
         Qt.Key_Q: 'exit',
@@ -227,6 +250,7 @@ class PlotWindow(QWidget):
         Qt.Key_Equal: 'zoom_in',
         Qt.Key_Minus: 'zoom_out',
         Qt.Key_R: 'reset',
+        Qt.Key_W: 'quicksave',
     }
 
     actionmap = {
@@ -237,7 +261,8 @@ class PlotWindow(QWidget):
         'move_right': lambda self: self.modify_tr(+1, 0),
         'zoom_in': lambda self: self.modify_zoom(+1),
         'zoom_out': lambda self: self.modify_zoom(-1),
-        'reset': reset_view
+        'reset': reset_view,
+        'quicksave': quicksave
     }
 
 def pointfn(fn, target, src):
