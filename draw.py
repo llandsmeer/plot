@@ -17,43 +17,45 @@ class Line:
         self.style = LINE if len(line) > 3 else DOTS
         self.width = 4
 
+    @classmethod
+    def as_line(cls, line):
+        return line if isinstance(line, cls) else cls(line)
+
     def __iter__(self):
         return iter(self.line)
 
-class PlotWindow(QWidget):
-    def __init__(self, lines=(), **kwargs):
-        super(**kwargs).__init__()
-        self.load_lines(lines)
+class PlotDrawer:
+    def __init__(self):
         self.reset_view()
-        self.drag_start = None
+        self.xmin = self.ymin = 0
+        self.xmax = self.ymax = 1
+        self.width = 100
+        self.height = 100
+
+    def drag(self, x, y):
+        return PlotDrawerDrag(self, x, y)
 
     def reset_view(self):
         self.trans_x = 0
         self.trans_y = 0
         self.zoom = 0
 
-    def load_lines(self, lines):
-        lines = [l if isinstance(l, Line) else Line(l) for l in lines]
-        self.lines = lines
-        pmin = pmax = None, None
-        for line in lines:
-            for point in line:
-                pmin = pointfn(min, pmin, point)
-                pmax = pointfn(max, pmax, point)
-        self.xmin = pmin[0]
-        self.ymin = pmin[1]
-        self.xmax = pmax[0]
-        self.ymax = pmax[1]
+    def set_bounds(self, xmin, ymin, xmax, ymax):
+        self.xmin = xmin
+        self.ymin = ymin
+        self.xmax = xmax
+        self.ymax = ymax
+
+    def set_size(self, width, height):
+        self.width = width
+        self.height = height
 
     def translate_point(self, point):
-        size = self.size()
-        width = size.width()
-        height = size.height()
         px, py = point
         relx = (px-self.xmin)/(self.xmax-self.xmin)
         rely = (py-self.ymin)/(self.ymax-self.ymin)
         tx, ty = self.zoomed((relx-self.trans_x, rely-self.trans_y))
-        return tx * width, (1-ty) * height
+        return tx * self.width, (1-ty) * self.height
 
     def zoomed(self, point):
         x, y = point
@@ -67,31 +69,17 @@ class PlotWindow(QWidget):
         y = (y-0.5)/ZOOM_FACTOR**self.zoom + 0.5
         return x, y
 
-    def wheelEvent(self, e):
-        y = e.angleDelta().y()
-        size = self.size()
-        point = e.x() / size.width(), 1 - e.y() / size.height()
+    def scaled(self, point):
+        x, y = point
+        return x / self.width, 1 - y / self.height
+
+    def zoom_to_point(self, direction, point):
+        point = self.scaled(point)
         ox, oy = self.unzoomed(point)
-        if y > 0:
-            self.zoom += 1
-        if y < 0:
-            self.zoom -= 1
+        self.zoom += direction
         nx, ny = self.unzoomed(point)
         self.trans_x += ox - nx
         self.trans_y += oy - ny
-        self.update()
-
-    def draw_plot_window(self, painter):
-        for line in self.lines:
-            self.draw_line(painter, line)
-        self.draw_translation(painter)
-
-    def modify_tr(self, x, y):
-        self.trans_x += x * TRANS_DELTA / ZOOM_FACTOR**self.zoom
-        self.trans_y += y * TRANS_DELTA / ZOOM_FACTOR**self.zoom
-
-    def modify_zoom(self, z):
-        self.zoom += z
 
     def draw_line(self, painter, line):
         path = self.path(line)
@@ -121,6 +109,65 @@ class PlotWindow(QWidget):
             is_first = False
         return path
 
+    def draw_lines(self, painter, lines):
+        pmin = self.xmin, self.ymin
+        pmax = self.xmax, self.ymax
+        xmin, ymin = self.translate_point(pmin)
+        xmax, ymax = self.translate_point(pmax)
+        painter.fillRect(xmin, ymax, xmax-xmin, ymin-ymax, Qt.white)
+        for line in lines:
+            self.draw_line(painter, line)
+
+    def move_zoomed(self, dx, dy):
+        self.trans_x += dx / ZOOM_FACTOR**self.zoom
+        self.trans_y += dy / ZOOM_FACTOR**self.zoom
+
+class PlotDrawerDrag:
+    def __init__(self, drawer, x, y):
+        self.drawer = drawer
+        self.start = x, y
+        self.trans = drawer.trans_x, drawer.trans_y
+
+    def update(self, x, y):
+        sx, sy = self.start
+        tx, ty = self.trans
+        rdx =   (sx-x) / self.drawer.width / ZOOM_FACTOR**self.drawer.zoom
+        rdy = - (sy-y) / self.drawer.height / ZOOM_FACTOR**self.drawer.zoom
+        self.drawer.trans_x = tx + rdx
+        self.drawer.trans_y = ty + rdy
+
+class PlotWindow(QWidget):
+    def __init__(self, lines=(), **kwargs):
+        super(**kwargs).__init__()
+        self.drawer = PlotDrawer()
+        self.update_size()
+        self.load_lines(lines)
+        self.reset_view()
+        self.drag = None
+
+    def reset_view(self):
+        self.drawer.reset_view()
+
+    def load_lines(self, lines):
+        lines = [Line.as_line(l) for l in lines]
+        self.lines = lines
+        pmin = pmax = None, None
+        for line in lines:
+            for point in line:
+                pmin = pointfn(min, pmin, point)
+                pmax = pointfn(max, pmax, point)
+        self.drawer.set_bounds(*pmin, *pmax)
+
+    def update_size(self):
+        size = self.size()
+        self.drawer.set_size(size.width(), size.height())
+
+    def modify_tr(self, x, y):
+        self.drawer.move_zoomed(x*TRANS_DELTA, y*TRANS_DELTA)
+
+    def modify_zoom(self, z):
+        self.drawer.zoom += z
+
     def keyPressEvent(self, e):
         key = e.key()
         action = self.keymap.get(key, None)
@@ -135,36 +182,35 @@ class PlotWindow(QWidget):
         painter.begin(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setRenderHint(QPainter.HighQualityAntialiasing)
-        xmin, ymin = self.translate_point((min(0, self.xmin), min(0, self.ymin)))
-        xmax, ymax = self.translate_point((self.xmax, self.ymax))
-        painter.fillRect(xmin, ymax, xmax-xmin, ymin-ymax, Qt.white)
-        for line in self.lines:
-            self.draw_line(painter, line)
+        self.drawer.draw_lines(painter, self.lines)
         painter.end()
 
+    def wheelEvent(self, e):
+        self.update_size()
+        y = e.angleDelta().y()
+        point = e.x(), e.y()
+        direction = (y > 0) - (y < 0)
+        self.drawer.zoom_to_point(direction, point)
+        self.update()
+
     def mousePressEvent(self, e):
-        self.drag_start = e.x(), e.y(), self.trans_x, self.trans_y
+        self.drag = self.drawer.drag(e.x(), e.y())
         self.setMouseTracking(True)
 
     def mouseReleaseEvent(self, e):
-        self.update_tr_drag(e.x(), e.y())
-        self.drag_start = None
+        if not self.drag is None:
+            self.drag.update(e.x(), e.y())
+            self.update()
+        self.drag = None
         self.setMouseTracking(False)
 
     def mouseMoveEvent(self, e):
-        self.update_tr_drag(e.x(), e.y())
+        if not self.drag is None:
+            self.drag.update(e.x(), e.y())
+            self.update()
 
-    def update_tr_drag(self, nx, ny):
-        if self.drag_start is None:
-            return
-        ox, oy, tx, ty = self.drag_start
-        size = self.size()
-        rdx =   (ox-nx) / size.width() / ZOOM_FACTOR**self.zoom
-        rdy = - (oy-ny) / size.height() / ZOOM_FACTOR**self.zoom
-        self.trans_x = tx + rdx
-        self.trans_y = ty + rdy
-        self.update()
-
+    def resizeEvent(self, e):
+        self.update_size()
 
     keymap = {
         Qt.Key_Escape: 'exit',
